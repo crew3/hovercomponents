@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import esbuild from 'esbuild';
 import path from 'path';
+import fs from 'fs';
 import { polyfillNode } from 'esbuild-plugin-polyfill-node';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -43,12 +44,26 @@ export function activate(context: vscode.ExtensionContext) {
 
 						const outputPath = path.join(__dirname, `preview`, `component.js`);
 
+                        const nextDir = findNextDir(document.uri.fsPath); // Find the .next directory
+                        console.log('nextDir: ', nextDir);
+
+                        let cssFiles: string[] = [];
+                        if (nextDir) {
+                            const cssFilesPath = path.join(nextDir, 'static', 'css');
+                            cssFiles = fs.readdirSync(cssFilesPath).filter(file => file.endsWith('.css'));
+                            cssFiles.forEach(file => {
+                                const fullPath = path.join(cssFilesPath, file);
+                                const targetPath = path.join(__dirname, 'preview', 'styles', file);
+                                fs.cpSync(fullPath, targetPath, { recursive: true });
+                            });
+                        }
+
 						await esbuild.build({
 							entryPoints: [filePath],
 							bundle: true,
 							outfile: outputPath,
 							format: 'iife',
-							platform: 'node',
+							platform: 'browser',
 							globalName: 'ComponentModule',
 							target: 'es2022',
 							loader: {
@@ -90,7 +105,7 @@ export function activate(context: vscode.ExtensionContext) {
 							}]
 						});
 
-						createWebviewPanel(componentName, outputPath, mockProps);
+						createWebviewPanel(componentName, outputPath, nextDir!, cssFiles, mockProps);
 					}
 				}
 
@@ -99,6 +114,29 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		})
     );
+}
+
+function findNextDir(startPath: string) {
+    let currentDir = startPath;
+
+    while (currentDir) {
+        const nextDir = path.join(currentDir, '.next');
+
+        // Check if the .next directory exists
+        if (fs.existsSync(nextDir) && fs.statSync(nextDir).isDirectory()) {
+            return nextDir; // Return the found .next directory
+        }
+
+        // Move up one directory
+        const parentDir = path.dirname(currentDir);
+        // Stop if we've reached the root directory
+        if (parentDir === currentDir) {
+            break; // Exit if we can't go up anymore
+        }
+        currentDir = parentDir; // Move up to the parent directory
+    }
+
+    return null; // .next directory not found
 }
 
 function generateMockProps(componentData: any): any {
@@ -137,7 +175,7 @@ function generateMockProps(componentData: any): any {
 }
 
 // Create a webview panel to display the output
-function createWebviewPanel(componentName: any, bundlePath: string, mockProps: any) {
+function createWebviewPanel(componentName: any, bundlePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
     const panel = vscode.window.createWebviewPanel(
         'functionOutput',
         'Function Output',
@@ -149,12 +187,17 @@ function createWebviewPanel(componentName: any, bundlePath: string, mockProps: a
 
 	const componentUri = panel.webview.asWebviewUri(vscode.Uri.file(bundlePath));
 
+    const styleLinkTags = cssFiles.map(cssFile => {
+        const cssUri = panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'preview', 'styles', cssFile))); // Convert the path to a URI
+        return `<link rel="stylesheet" href="${cssUri}" />`;
+    }).join('\n');
+
     // Set the HTML content of the webview
-    panel.webview.html = getWebviewContent(componentName, componentUri, mockProps);
+    panel.webview.html = getWebviewContent(componentName, componentUri, styleLinkTags, mockProps);
 }
 
 // Generate HTML content for the webview
-function getWebviewContent(componentName: string, componentUri: vscode.Uri, mockProps: any): string {
+function getWebviewContent(componentName: string, componentUri: vscode.Uri, styleLinkTags: string, mockProps: any): string {
     return `
     <!DOCTYPE html>
     <html lang="en">
@@ -162,6 +205,8 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, mock
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Function Output</title>
+        ${styleLinkTags}
+        <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
 		<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
 		<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
 		<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
