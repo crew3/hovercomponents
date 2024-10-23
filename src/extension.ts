@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import * as ts from 'typescript';
-import { buildReactComponent } from './buildUtils';
+import esbuild from 'esbuild';
+import path from 'path';
+import { polyfillNode } from 'esbuild-plugin-polyfill-node';
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -8,19 +9,88 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		vscode.languages.registerHoverProvider('*', {
-			provideHover(document, position, token) {
+			async provideHover(document, position, token) {
 				const range = document.getWordRangeAtPosition(position);
 				const word = document.getText(range);
 
 				if (word) {
-					const functionNode = getFunctionAtPosition(document, position);
+                    console.log('word: ', word);
 
-					if (functionNode) {
-						const { sourceFile, typeChecker } = setupProgram(document);  // Set up the TypeChecker
-						const functionCode = getTextForNode(functionNode, document);
-						const props = getPropsFromComponent(functionNode, sourceFile!, typeChecker);
-						const mockProps = createMockProps(props);
-						createWebviewPanel(functionCode, mockProps);
+                    const reactDocgen = await import('react-docgen');
+
+                    const parsedComponents = reactDocgen.parse(document.getText(), {
+                        babelOptions: {
+                            parserOpts: {
+                                plugins: ['jsx', 'typescript'],
+                            },
+                        }
+                    });
+
+                    console.log('parsedComponents: ', parsedComponents);
+					
+                    const foundComponent = parsedComponents.find(component => component.displayName === word);
+
+					if (foundComponent) {
+						
+						const componentName = foundComponent.displayName;
+						console.log('componentName: ', componentName);
+
+						const mockProps = generateMockProps(foundComponent);
+
+						const filePath = document.fileName;
+
+						console.log('filePath: ', filePath);
+
+						const outputPath = path.join(__dirname, `preview`, `component.js`);
+
+						await esbuild.build({
+							entryPoints: [filePath],
+							bundle: true,
+							outfile: outputPath,
+							format: 'iife',
+							platform: 'node',
+							globalName: 'ComponentModule',
+							target: 'es2022',
+							loader: {
+								'.webp': 'file',
+								'.jpg': 'file',
+							},
+                            define: {
+                                'process.env.NODE_ENV': '"development"', // Inject NODE_ENV
+                            },
+							plugins: [
+                                polyfillNode({
+                                    // Options (optional)
+                                }),
+                                {
+                                    name: 'external-modules',
+                                    setup(build) {
+                                    // Handle React imports
+                                    build.onResolve({ filter: /^react$/ }, () => {
+                                        return { path: 'react', namespace: 'external-react' };
+                                    })
+                                    build.onLoad({ filter: /.*/, namespace: 'external-react' }, () => {
+                                        return {
+                                        contents: 'module.exports = window.React',
+                                        loader: 'js'
+                                        };
+                                    });
+                                    
+                                    // Handle React DOM imports
+                                    //   build.onResolve({ filter: /^react-dom$/ }, () => {
+                                    // 	return { path: 'react-dom', namespace: 'external-react-dom' }
+                                    //   })
+                                    //   build.onLoad({ filter: /.*/, namespace: 'external-react-dom' }, () => {
+                                    // 	return {
+                                    // 	  contents: 'module.exports = window.ReactDOM',
+                                    // 	  loader: 'js'
+                                    // 	};
+                                    //   });
+                                }
+							}]
+						});
+
+						createWebviewPanel(componentName, outputPath, mockProps);
 					}
 				}
 
@@ -31,167 +101,43 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
-// Function to create a TypeScript program and get the TypeChecker
-function setupProgram(document: vscode.TextDocument) {
-	const fileName = 'temp.tsx';
-    const compilerOptions: ts.CompilerOptions = {
-        target: ts.ScriptTarget.Latest,
-        jsx: ts.JsxEmit.React,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
-        noEmit: true,
-        esModuleInterop: true,
-        skipLibCheck: true,
-        strict: true,
-    };
-
-    // Create proper virtual file system
-    const fileMap = new Map<string, string>();
-    fileMap.set(fileName, document.getText());
-
-    // Complete compiler host implementation
-    const compilerHost: ts.CompilerHost = {
-        getSourceFile: (filename: string, languageVersion: ts.ScriptTarget) => {
-            const sourceText = fileMap.get(filename);
-            return sourceText 
-                ? ts.createSourceFile(filename, sourceText, languageVersion)
-                : undefined;
-        },
-        getDefaultLibFileName: () => "lib.d.ts",
-        writeFile: () => {},
-        getCurrentDirectory: () => "/",
-        getCanonicalFileName: (fileName: string) => fileName,
-        useCaseSensitiveFileNames: () => true,
-        getNewLine: () => "\n",
-        fileExists: (fileName: string) => fileMap.has(fileName),
-        readFile: (fileName: string) => fileMap.get(fileName) || "",
-        getDirectories: () => [],
-    };
-
-    const program = ts.createProgram(
-        [fileName], 
-        compilerOptions, 
-        compilerHost
-    );
-
-    return { typeChecker: program.getTypeChecker(), sourceFile: program.getSourceFile(fileName) };
-}
-
-function generateMockData(paramType: string): any {
-    switch (paramType) {
+function generateMockProps(componentData: any): any {
+    const dummyProps: { [key: string]: any } = {};
+  
+    function generateDummyValue(tsType: any): any {
+      switch (tsType.name) {
         case 'string':
-            return 'Sample text';
+          return 'dummy string';
         case 'number':
-            return 123;
+          return 123;
         case 'boolean':
-            return true;
-		case 'Array':
-		case 'any[]':
-            return [1, 2, 3];
-        case 'object':
-		case '{}':
-            return { key: 'value' };
+          return true;
+        case 'Array':
+          return tsType.elements ? [generateDummyValue(tsType.elements[0])] : [];
+        case 'signature':
+          if (tsType.type === 'object') {
+            const obj: { [key: string]: any } = {};
+            tsType.signature.properties.forEach((prop: any) => {
+              obj[prop.key] = generateDummyValue(prop.value);
+            });
+            return obj;
+          }
+          return {};
         default:
-            return null;
+          return null;
+      }
     }
-}
-
-// Create dummy props object based on detected parameters
-function createMockProps(params: Record<string, string>): Record<string, any> {
-    const mockProps: Record<string, any> = {};
-
-    Object.entries(params).forEach(([paramName, paramType]) => {
-        mockProps[paramName] = generateMockData(paramType);
+  
+    Object.keys(componentData.props).forEach((propName) => {
+      const propInfo = componentData.props[propName];
+      dummyProps[propName] = generateDummyValue(propInfo.tsType);
     });
-
-    return mockProps;
-}
-
-// Extract the single parameter (props object) and parse its fields and types
-function getPropsFromComponent(node: ts.Node, sourceFile: ts.SourceFile, typeChecker: ts.TypeChecker): Record<string, string> {
-    const props: Record<string, string> = {};
-
-    if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node)) {
-        const [param] = node.parameters;
-
-        // If the parameter has a type (object type for props), we process it
-        if (param && param.type) {
-
-			let typeNode = param.type;
-
-			if (ts.isTypeReferenceNode(typeNode)) {
-				let typeAlias: ts.TypeAliasDeclaration | undefined;
-                
-                ts.forEachChild(sourceFile, function findTypeAlias(node) {
-					if (ts.isTypeAliasDeclaration(node) && 
-					node.name.getText() === (typeNode as ts.TypeReferenceNode).typeName.getText()) {
-                        typeAlias = node;
-                    }
-                });
-
-                if (typeAlias) {
-                    typeNode = typeAlias.type;
-                }				
-			} 
-			
-			if  (ts.isTypeLiteralNode(typeNode)) {
-				typeNode.members.forEach(member => {
-                    if (ts.isPropertySignature(member) && member.type) {
-                        const propName = member.name.getText();
-                        const propType = typeChecker.typeToString(
-                            typeChecker.getTypeFromTypeNode(member.type)
-                        );
-                        props[propName] = propType;
-                    }
-                });
-			}
-        }
-    }
-
-    return props;
-}
-
-// Function to parse the code and find the function node at the current position
-function getFunctionAtPosition(document: vscode.TextDocument, position: vscode.Position): ts.FunctionDeclaration | ts.ArrowFunction | null {
-    const sourceFile = ts.createSourceFile(
-        document.fileName,
-        document.getText(),
-        ts.ScriptTarget.Latest,
-        true
-    );
-
-    let functionNode: ts.FunctionDeclaration | ts.ArrowFunction | null = null;
-
-    // Traverse the AST to find the function at the hovered position
-    const findFunctionNode = (node: ts.Node) => {
-        if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node)) {
-            const { line: startLine, character: startChar } = document.positionAt(node.getStart());
-            const { line: endLine, character: endChar } = document.positionAt(node.getEnd());
-
-            // Check if the position is within the function range
-            if (position.line >= startLine && position.line <= endLine) {
-                functionNode = node as ts.FunctionDeclaration | ts.ArrowFunction;
-                return; // Exit traversal if the function is found
-            }
-        }
-        ts.forEachChild(node, findFunctionNode);
-    };
-
-    findFunctionNode(sourceFile);
-
-    return functionNode;
-}
-
-// Extract the full text of the function node
-function getTextForNode(node: ts.Node, document: vscode.TextDocument): string {
-    const start = node.getStart();
-    const end = node.getEnd();
-    const functionCode = document.getText(new vscode.Range(document.positionAt(start), document.positionAt(end)));
-
-    return functionCode;
+  
+    return dummyProps;
 }
 
 // Create a webview panel to display the output
-function createWebviewPanel(component: any, mockProps: any) {
+function createWebviewPanel(componentName: any, bundlePath: string, mockProps: any) {
     const panel = vscode.window.createWebviewPanel(
         'functionOutput',
         'Function Output',
@@ -201,12 +147,14 @@ function createWebviewPanel(component: any, mockProps: any) {
         }
     );
 
+	const componentUri = panel.webview.asWebviewUri(vscode.Uri.file(bundlePath));
+
     // Set the HTML content of the webview
-    panel.webview.html = getWebviewContent(component, mockProps);
+    panel.webview.html = getWebviewContent(componentName, componentUri, mockProps);
 }
 
 // Generate HTML content for the webview
-function getWebviewContent(component: any, mockProps: any): string {
+function getWebviewContent(componentName: string, componentUri: vscode.Uri, mockProps: any): string {
     return `
     <!DOCTYPE html>
     <html lang="en">
@@ -214,9 +162,10 @@ function getWebviewContent(component: any, mockProps: any): string {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Function Output</title>
-        <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
-        <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+		<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+		<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
 		<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+		<script src="${componentUri}"></script>
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 20px; }
             h1 { font-size: 24px; }
@@ -227,13 +176,12 @@ function getWebviewContent(component: any, mockProps: any): string {
     <body>
         <div id="app"></div>
         <script type="text/babel">
-			// Basic React hooks	
-			const { useState, useEffect, useRef, useContext } = React;
-			
 			// Mock props to pass to the component
             const props = ${JSON.stringify(mockProps)};
-			
-			const Component = ${component}
+
+			console.log('props: ', props);
+
+			const Component = ComponentModule["${componentName}"];
 
             const App = () => {
                 return (
