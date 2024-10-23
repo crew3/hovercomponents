@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import esbuild from 'esbuild';
 import path from 'path';
 import fs from 'fs';
-import { polyfillNode } from 'esbuild-plugin-polyfill-node';
+import { polyfillNode } from "esbuild-plugin-polyfill-node";
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -24,7 +24,8 @@ export function activate(context: vscode.ExtensionContext) {
                             parserOpts: {
                                 plugins: ['jsx', 'typescript'],
                             },
-                        }
+                        },
+                        resolver: new reactDocgen.builtinResolvers.FindAllDefinitionsResolver(),
                     });
 
                     console.log('parsedComponents: ', parsedComponents);
@@ -72,10 +73,13 @@ export function activate(context: vscode.ExtensionContext) {
 							},
                             define: {
                                 'process.env.NODE_ENV': '"development"', // Inject NODE_ENV
+                                'global': 'globalThis',
                             },
 							plugins: [
                                 polyfillNode({
-                                    // Options (optional)
+                                    polyfills: {
+                                        crypto: true,
+                                    }
                                 }),
                                 {
                                     name: 'external-modules',
@@ -90,17 +94,6 @@ export function activate(context: vscode.ExtensionContext) {
                                         loader: 'js'
                                         };
                                     });
-                                    
-                                    // Handle React DOM imports
-                                    //   build.onResolve({ filter: /^react-dom$/ }, () => {
-                                    // 	return { path: 'react-dom', namespace: 'external-react-dom' }
-                                    //   })
-                                    //   build.onLoad({ filter: /.*/, namespace: 'external-react-dom' }, () => {
-                                    // 	return {
-                                    // 	  contents: 'module.exports = window.ReactDOM',
-                                    // 	  loader: 'js'
-                                    // 	};
-                                    //   });
                                 }
 							}]
 						});
