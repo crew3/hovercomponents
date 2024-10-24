@@ -4,6 +4,11 @@ import path from 'path';
 import fs from 'fs';
 import { polyfillNode } from "esbuild-plugin-polyfill-node";
 
+
+let panel: vscode.WebviewPanel | undefined = undefined;
+let previousComponentName: string | undefined = undefined;
+let previousFileContent = '';
+
 export function activate(context: vscode.ExtensionContext) {
 
 	console.log('Congratulations, your extension "hovercomponents" is now active!');
@@ -50,7 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                         let cssFiles: string[] = [];
                         if (nextDir) {
-                            const cssFilesPath = path.join(nextDir, 'static', 'css');
+                            const cssFilesPath = path.join(nextDir, 'static', 'chunks');
                             cssFiles = fs.readdirSync(cssFilesPath).filter(file => file.endsWith('.css'));
                             cssFiles.forEach(file => {
                                 const fullPath = path.join(cssFilesPath, file);
@@ -97,8 +102,8 @@ export function activate(context: vscode.ExtensionContext) {
                                 }
 							}]
 						});
-
-						createWebviewPanel(componentName, outputPath, nextDir!, cssFiles, mockProps);
+						    
+                        createWebviewPanel(componentName, outputPath, filePath, nextDir!, cssFiles, mockProps);
 					}
 				}
 
@@ -159,17 +164,32 @@ function generateMockProps(componentData: any): any {
       }
     }
   
-    Object.keys(componentData.props).forEach((propName) => {
-      const propInfo = componentData.props[propName];
-      dummyProps[propName] = generateDummyValue(propInfo.tsType);
-    });
+    const hasProps = componentData?.props && Object.keys(componentData.props).length > 0;
+
+    if (hasProps) {
+        Object.keys(componentData.props).forEach((propName) => {
+        const propInfo = componentData.props[propName];
+        dummyProps[propName] = generateDummyValue(propInfo.tsType);
+        });
+    }
   
     return dummyProps;
 }
 
 // Create a webview panel to display the output
-function createWebviewPanel(componentName: any, bundlePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
-    const panel = vscode.window.createWebviewPanel(
+function createWebviewPanel(componentName: any, bundlePath: string, filePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
+    const currentFileContent = fs.readFileSync(filePath, 'utf-8')
+    // display the webview panel only if the component name is different
+    // so that when you hover on the component several times it doesn't 
+    // unnecessarily update it, which also creates a flicker
+    if (previousComponentName === componentName && previousFileContent === currentFileContent) { return false; }
+    
+    if (panel) {
+        panel.dispose();
+        previousComponentName = undefined;
+    }
+
+    panel = vscode.window.createWebviewPanel(
         'functionOutput',
         'Function Output',
         vscode.ViewColumn.Beside,
@@ -181,12 +201,21 @@ function createWebviewPanel(componentName: any, bundlePath: string, nextDir: str
 	const componentUri = panel.webview.asWebviewUri(vscode.Uri.file(bundlePath));
 
     const styleLinkTags = cssFiles.map(cssFile => {
-        const cssUri = panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'preview', 'styles', cssFile))); // Convert the path to a URI
+        const cssUri = panel?.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'preview', 'styles', cssFile))); // Convert the path to a URI
         return `<link rel="stylesheet" href="${cssUri}" />`;
     }).join('\n');
 
     // Set the HTML content of the webview
     panel.webview.html = getWebviewContent(componentName, componentUri, styleLinkTags, mockProps);
+
+    panel.onDidDispose(() => {
+        previousComponentName = undefined;
+        previousFileContent = '';
+        panel = undefined;
+    });
+
+    previousComponentName = componentName;
+    previousFileContent = currentFileContent;
 }
 
 // Generate HTML content for the webview
@@ -203,12 +232,13 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
 		<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
 		<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
 		<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+        <script src="https://cdn.tailwindcss.com"></script>
 		<script src="${componentUri}"></script>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 20px; }
+            body { background-color: #0d0d0d; color: #ffffff; margin: 0; padding: 0; }
             h1 { font-size: 24px; }
             pre { background-color: #f6f8fa; padding: 10px; border-radius: 5px; }
-			#app { height: 100vh; background-color: green; color: white; }
+			#app { height: 100vh; }
         </style>
     </head>
     <body>
@@ -223,9 +253,16 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
 
             const App = () => {
                 return (
-                    <div>
-                        <h1>Function Output</h1>
-						<Component {...props} />
+                    <div className="h-screen flex flex-col">
+                        <div className="font-bold text-lg py-2 px-4">XYZly</div>
+                        <div className="rounded-t-2xl border border-black border-opacity-10 bg-white flex-grow px-4 py-4 text-black">
+						    <Component {...props} />
+                            <div>
+                                <pre>
+                                    {JSON.stringify(props, null, 2)}
+                                </pre>
+                            </div>
+                        </div>
                     </div>
                 );
             };
@@ -237,4 +274,11 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate() {
+    if (panel) {
+        panel.dispose();
+    }
+    panel = undefined;
+    previousComponentName = undefined;
+    previousFileContent = '';
+}
