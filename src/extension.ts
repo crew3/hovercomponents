@@ -7,6 +7,7 @@ import { polyfillNode } from "esbuild-plugin-polyfill-node";
 
 let panel: vscode.WebviewPanel | undefined = undefined;
 let previousComponentName: string | undefined = undefined;
+let previousFileContent = '';
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -102,7 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
 							}]
 						});
 						    
-                        createWebviewPanel(componentName, outputPath, nextDir!, cssFiles, mockProps);
+                        createWebviewPanel(componentName, outputPath, filePath, nextDir!, cssFiles, mockProps);
 					}
 				}
 
@@ -172,12 +173,13 @@ function generateMockProps(componentData: any): any {
 }
 
 // Create a webview panel to display the output
-function createWebviewPanel(componentName: any, bundlePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
+function createWebviewPanel(componentName: any, bundlePath: string, filePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
+    const currentFileContent = fs.readFileSync(filePath, 'utf-8')
     // display the webview panel only if the component name is different
     // so that when you hover on the component several times it doesn't 
     // unnecessarily update it, which also creates a flicker
-    if (previousComponentName === componentName) { return false; }
-
+    if (previousComponentName === componentName && previousFileContent === currentFileContent) { return false; }
+    
     if (panel) {
         panel.dispose();
         previousComponentName = undefined;
@@ -208,6 +210,7 @@ function createWebviewPanel(componentName: any, bundlePath: string, nextDir: str
     });
 
     previousComponentName = componentName;
+    previousFileContent = currentFileContent;
 }
 
 // Generate HTML content for the webview
