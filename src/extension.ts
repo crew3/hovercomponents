@@ -210,6 +210,7 @@ function createWebviewPanel(componentName: any, bundlePath: string, filePath: st
 
     panel.onDidDispose(() => {
         previousComponentName = undefined;
+        previousFileContent = '';
         panel = undefined;
     });
 
@@ -273,4 +274,11 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate() {
+    if (panel) {
+        panel.dispose();
+    }
+    panel = undefined;
+    previousComponentName = undefined;
+    previousFileContent = '';
+}
