@@ -6,6 +6,7 @@ import { polyfillNode } from "esbuild-plugin-polyfill-node";
 
 
 let panel: vscode.WebviewPanel | undefined = undefined;
+let previousComponentName: string | undefined = undefined;
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -100,8 +101,8 @@ export function activate(context: vscode.ExtensionContext) {
                                 }
 							}]
 						});
-
-						createWebviewPanel(componentName, outputPath, nextDir!, cssFiles, mockProps);
+						    
+                        createWebviewPanel(componentName, outputPath, nextDir!, cssFiles, mockProps);
 					}
 				}
 
@@ -172,8 +173,14 @@ function generateMockProps(componentData: any): any {
 
 // Create a webview panel to display the output
 function createWebviewPanel(componentName: any, bundlePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
+    // display the webview panel only if the component name is different
+    // so that when you hover on the component several times it doesn't 
+    // unnecessarily update it, which also creates a flicker
+    if (previousComponentName === componentName) { return false; }
+
     if (panel) {
-        panel.dispose(); 
+        panel.dispose();
+        previousComponentName = undefined;
     }
 
     panel = vscode.window.createWebviewPanel(
@@ -194,6 +201,13 @@ function createWebviewPanel(componentName: any, bundlePath: string, nextDir: str
 
     // Set the HTML content of the webview
     panel.webview.html = getWebviewContent(componentName, componentUri, styleLinkTags, mockProps);
+
+    panel.onDidDispose(() => {
+        previousComponentName = undefined;
+        panel = undefined;
+    });
+
+    previousComponentName = componentName;
 }
 
 // Generate HTML content for the webview
