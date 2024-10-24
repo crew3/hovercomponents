@@ -164,10 +164,14 @@ function generateMockProps(componentData: any): any {
       }
     }
   
-    Object.keys(componentData.props).forEach((propName) => {
-      const propInfo = componentData.props[propName];
-      dummyProps[propName] = generateDummyValue(propInfo.tsType);
-    });
+    const hasProps = componentData?.props && Object.keys(componentData.props).length > 0;
+
+    if (hasProps) {
+        Object.keys(componentData.props).forEach((propName) => {
+        const propInfo = componentData.props[propName];
+        dummyProps[propName] = generateDummyValue(propInfo.tsType);
+        });
+    }
   
     return dummyProps;
 }
