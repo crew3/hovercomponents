@@ -43,9 +43,12 @@
   },
   "dependencies": {
     "casual": "^1.6.2",
+    "buffer": "^6.0.3",
+    "dotenv": "^16.4.5",
     "esbuild": "^0.24.0",
     "esbuild-plugin-polyfill-node": "^0.3.0",
     "install": "^0.13.0",
-    "react-docgen": "^7.1.0"
+    "react-docgen": "^7.1.0",
+    "stream-browserify": "^3.0.0"
   }
 }
