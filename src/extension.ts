@@ -50,19 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 						console.log('filePath: ', filePath);
 
-                        const nextDir = findNextDir(document.uri.fsPath); // Find the .next directory
-                        console.log('nextDir: ', nextDir);
-
-                        let cssFiles: string[] = [];
-                        if (nextDir) {
-                            const cssFilesPath = path.join(nextDir, 'static', 'chunks');
-                            cssFiles = fs.readdirSync(cssFilesPath).filter(file => file.endsWith('.css'));
-                            cssFiles.forEach(file => {
-                                const fullPath = path.join(cssFilesPath, file);
-                                const targetPath = path.join(__dirname, 'preview', 'styles', file);
-                                fs.cpSync(fullPath, targetPath, { recursive: true });
-                            });
-                        }
+                        const cssFiles = findCssFiles(document.uri.fsPath);
 
                         const wrapperFilePath = findWrapperFile(document.uri.fsPath); // Find the wrapper file
                         console.log('wrapperFilePath: ', wrapperFilePath);
@@ -139,14 +127,61 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function findNextDir(startPath: string) {
+    return findDirectory(startPath, '.next');
+}
+
+function findDistDir(startPath: string) {
+    return findDirectory(startPath, 'dist');
+}
+
+function findCssFiles(startPath: string) {
+    let cssFiles: string[] = [];
+
+    const nextDir = findNextDir(startPath);
+    console.log('nextDir: ', nextDir);
+    
+    if (nextDir) {
+        const cssFilesPath = path.join(nextDir, 'static', 'chunks');
+
+        if (fs.existsSync(cssFilesPath) && fs.statSync(cssFilesPath).isDirectory()) {
+            cssFiles = fs.readdirSync(cssFilesPath).filter(file => file.endsWith('.css'));
+            cssFiles.forEach(file => {
+                const fullPath = path.join(cssFilesPath, file);
+                const targetPath = path.join(__dirname, 'preview', 'styles', file);
+                fs.cpSync(fullPath, targetPath, { recursive: true });
+            });
+        }
+
+        return cssFiles;
+    }
+
+    // For DS, we assume styles.css in dist/ directory
+    const distDir = findDistDir(startPath);
+    console.log('distDir: ', distDir);
+
+    if (distDir) {
+        console.log('dist readdirSync: ', fs.readdirSync(distDir));
+        cssFiles = fs.readdirSync(distDir).filter(file => file.endsWith('.css'));
+        console.log('cssFiles: ', cssFiles);
+        cssFiles.forEach(file => {
+            const fullPath = path.join(distDir, file);
+            const targetPath = path.join(__dirname, 'preview', 'styles', file);
+            fs.cpSync(fullPath, targetPath, { recursive: true });
+        });
+    }
+
+    return cssFiles;
+}
+
+function findDirectory(startPath: string, directoryName: string) {
     let currentDir = startPath;
 
     while (currentDir) {
-        const nextDir = path.join(currentDir, '.next');
+        const attemptedDir = path.join(currentDir, directoryName);
 
-        // Check if the .next directory exists
-        if (fs.existsSync(nextDir) && fs.statSync(nextDir).isDirectory()) {
-            return nextDir; // Return the found .next directory
+        // Check if the directory exists
+        if (fs.existsSync(attemptedDir) && fs.statSync(attemptedDir).isDirectory()) {
+            return attemptedDir; // Return the found directory
         }
 
         // Move up one directory
@@ -158,37 +193,16 @@ function findNextDir(startPath: string) {
         currentDir = parentDir; // Move up to the parent directory
     }
 
-    return null; // .next directory not found
+    return null; // directory not found
 }
 
-function findEnvFile(startPath: string) {
-    let currentDir = startPath;
-
-    // Traverse upwards to find the .env file
-    while (currentDir) {
-        const envFilePath = path.join(currentDir, '.env');
-        if (fs.existsSync(envFilePath)) {
-            return envFilePath; // Return the found .env file
-        }
-
-        // Move up one directory
-        const parentDir = path.dirname(currentDir);
-        if (parentDir === currentDir) {
-            break; // Stop if we've reached the root directory
-        }
-        currentDir = parentDir;
-    }
-
-    return null; // If no .env file is found
-}
-
-function findWrapperFile(startPath: string) {
+function findFile(startPath: string, fileName: string) {
     let currentDir = startPath;
 
     while (currentDir) {
-        const wrapperFilePath = path.join(currentDir, 'PreviewWrapper.tsx');
-        if (fs.existsSync(wrapperFilePath)) {
-            return wrapperFilePath; // Return the found wrapper file
+        const filePath = path.join(currentDir, fileName);
+        if (fs.existsSync(filePath)) {
+            return filePath; // Return the found file
         }
 
         // Move up one directory
@@ -200,6 +214,14 @@ function findWrapperFile(startPath: string) {
     }
 
     return null;
+}
+
+function findEnvFile(startPath: string) {
+    return findFile(startPath, '.env');
+}
+
+function findWrapperFile(startPath: string) {
+    return findFile(startPath, 'PreviewWrapper.tsx');
 }
 
 function createWrappedComponentFile(componentFilePath: string, wrapperFilePath: string, componentName: string) {
@@ -227,9 +249,7 @@ function createWrappedComponentFile(componentFilePath: string, wrapperFilePath: 
 
     export default function WrappedComponent(props) {
         return (
-            ${wrapperFilePath ? '<PreviewWrapper>' : '<>'}
-                <ComponentToRender {...props} />
-            ${wrapperFilePath ? '</PreviewWrapper>' : '</>'}
+            ${wrapperFilePath ? '<PreviewWrapper><ComponentToRender {...props} /></PreviewWrapper>' : '<ComponentToRender {...props} />'}
         );
     }
     `;
