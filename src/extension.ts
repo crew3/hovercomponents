@@ -55,12 +55,15 @@ export function activate(context: vscode.ExtensionContext) {
                         let cssFiles: string[] = [];
                         if (nextDir) {
                             const cssFilesPath = path.join(nextDir, 'static', 'chunks');
-                            cssFiles = fs.readdirSync(cssFilesPath).filter(file => file.endsWith('.css'));
-                            cssFiles.forEach(file => {
-                                const fullPath = path.join(cssFilesPath, file);
-                                const targetPath = path.join(__dirname, 'preview', 'styles', file);
-                                fs.cpSync(fullPath, targetPath, { recursive: true });
-                            });
+
+                            if (fs.existsSync(cssFilesPath) && fs.statSync(cssFilesPath).isDirectory()) {
+                                cssFiles = fs.readdirSync(cssFilesPath).filter(file => file.endsWith('.css'));
+                                cssFiles.forEach(file => {
+                                    const fullPath = path.join(cssFilesPath, file);
+                                    const targetPath = path.join(__dirname, 'preview', 'styles', file);
+                                    fs.cpSync(fullPath, targetPath, { recursive: true });
+                                });
+                            }
                         }
 
                         const wrapperFilePath = findWrapperFile(document.uri.fsPath); // Find the wrapper file
