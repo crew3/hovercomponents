@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import dotenv from 'dotenv';
 import esbuild from 'esbuild';
 import path from 'path';
 import fs from 'fs';
@@ -48,8 +49,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 						console.log('filePath: ', filePath);
 
-						const outputPath = path.join(__dirname, `preview`, `component.js`);
-
                         const nextDir = findNextDir(document.uri.fsPath); // Find the .next directory
                         console.log('nextDir: ', nextDir);
 
@@ -64,10 +63,26 @@ export function activate(context: vscode.ExtensionContext) {
                             });
                         }
 
+                        const wrapperFilePath = findWrapperFile(document.uri.fsPath); // Find the wrapper file
+                        console.log('wrapperFilePath: ', wrapperFilePath);
+
+                        createWrappedComponentFile(filePath, wrapperFilePath!, componentName!);
+
+                        let envVars: Record<string, unknown> = {};
+                        const envFilePath = findEnvFile(document.uri.fsPath); // Find the .env file
+                        if (envFilePath) {
+                            const envFile = fs.readFileSync(envFilePath, 'utf8');
+                            const parsedEnv = dotenv.parse(envFile);
+                            
+                            Object.keys(parsedEnv).filter(key => key.startsWith('NEXT_PUBLIC')).forEach(key => {
+                                envVars[`process.env.${key}`] = `"${parsedEnv[key]}"`;
+                            });
+                        }
+
 						await esbuild.build({
-							entryPoints: [filePath],
+							entryPoints: [path.join(__dirname, 'wrapped-component.tsx')],
 							bundle: true,
-							outfile: outputPath,
+							outfile: path.join(__dirname, 'preview', 'component.js'),
 							format: 'iife',
 							platform: 'browser',
 							globalName: 'ComponentModule',
@@ -77,13 +92,17 @@ export function activate(context: vscode.ExtensionContext) {
 								'.jpg': 'file',
 							},
                             define: {
+                                ...envVars,
                                 'process.env.NODE_ENV': '"development"', // Inject NODE_ENV
                                 'global': 'globalThis',
                             },
 							plugins: [
                                 polyfillNode({
                                     polyfills: {
+                                        buffer: false,
                                         crypto: true,
+                                        util: true,
+                                        stream: false,
                                     }
                                 }),
                                 {
@@ -100,10 +119,14 @@ export function activate(context: vscode.ExtensionContext) {
                                         };
                                     });
                                 }
-							}]
+							}],
+                            alias: {
+                                // 'stream': 'stream-browserify',
+                            },
+                            inject: [path.join(__dirname, `polyfill.js`)],
 						});
 						    
-                        createWebviewPanel(componentName, outputPath, filePath, nextDir!, cssFiles, mockProps);
+                        createWebviewPanel(componentName, filePath, cssFiles, mockProps);
 					}
 				}
 
@@ -135,6 +158,84 @@ function findNextDir(startPath: string) {
     }
 
     return null; // .next directory not found
+}
+
+function findEnvFile(startPath: string) {
+    let currentDir = startPath;
+
+    // Traverse upwards to find the .env file
+    while (currentDir) {
+        const envFilePath = path.join(currentDir, '.env');
+        if (fs.existsSync(envFilePath)) {
+            return envFilePath; // Return the found .env file
+        }
+
+        // Move up one directory
+        const parentDir = path.dirname(currentDir);
+        if (parentDir === currentDir) {
+            break; // Stop if we've reached the root directory
+        }
+        currentDir = parentDir;
+    }
+
+    return null; // If no .env file is found
+}
+
+function findWrapperFile(startPath: string) {
+    let currentDir = startPath;
+
+    while (currentDir) {
+        const wrapperFilePath = path.join(currentDir, 'PreviewWrapper.tsx');
+        if (fs.existsSync(wrapperFilePath)) {
+            return wrapperFilePath; // Return the found wrapper file
+        }
+
+        // Move up one directory
+        const parentDir = path.dirname(currentDir);
+        if (parentDir === currentDir) {
+            break; // Stop if we've reached the root directory
+        }
+        currentDir = parentDir;
+    }
+
+    return null;
+}
+
+function createWrappedComponentFile(componentFilePath: string, wrapperFilePath: string, componentName: string) {
+    const relativeComponentPath = path.relative(__dirname, componentFilePath);
+
+    let wrapperFileImport = '';
+    if (wrapperFilePath) {
+        const relativeWrapperPath = path.relative(__dirname, wrapperFilePath);
+        wrapperFileImport = `import { PreviewWrapper } from './${relativeWrapperPath}';`;
+    }
+
+    const file = `
+    import * as Module from './${relativeComponentPath}';
+    ${wrapperFileImport}
+
+    let ComponentToRender;
+
+    if (Module.${componentName}) {
+        // Named export
+        ComponentToRender = Module.${componentName};
+    } else {
+        // Default export
+        ComponentToRender = Module.default;
+    }
+
+    export default function WrappedComponent(props) {
+        return (
+            ${wrapperFilePath ? '<PreviewWrapper>' : '<>'}
+                <ComponentToRender {...props} />
+            ${wrapperFilePath ? '</PreviewWrapper>' : '</>'}
+        );
+    }
+    `;
+
+    fs.writeFileSync(path.join(__dirname, 'wrapped-component.tsx'), file);
+
+    console.log('Creating component file...', file);
 }
 
 function generateMockProps(componentData: any): any {
@@ -177,7 +278,7 @@ function generateMockProps(componentData: any): any {
 }
 
 // Create a webview panel to display the output
-function createWebviewPanel(componentName: any, bundlePath: string, filePath: string, nextDir: string, cssFiles: string[], mockProps: any) {
+function createWebviewPanel(componentName: string, filePath: string, cssFiles: string[], mockProps: any) {
     const currentFileContent = fs.readFileSync(filePath, 'utf-8')
     // display the webview panel only if the component name is different
     // so that when you hover on the component several times it doesn't 
@@ -198,7 +299,8 @@ function createWebviewPanel(componentName: any, bundlePath: string, filePath: st
         }
     );
 
-	const componentUri = panel.webview.asWebviewUri(vscode.Uri.file(bundlePath));
+    const componentOutputPath = path.join(__dirname, `preview`, `component.js`);
+	const componentUri = panel.webview.asWebviewUri(vscode.Uri.file(componentOutputPath));
 
     const styleLinkTags = cssFiles.map(cssFile => {
         const cssUri = panel?.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'preview', 'styles', cssFile))); // Convert the path to a URI
@@ -228,9 +330,8 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Function Output</title>
         ${styleLinkTags}
-        <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
-		<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
-		<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+        <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+		<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 		<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
         <script src="https://cdn.tailwindcss.com"></script>
 		<script src="${componentUri}"></script>
@@ -249,7 +350,9 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
 
 			console.log('props: ', props);
 
-			const Component = ComponentModule["${componentName}"];
+            console.log('ComponentModule: ', ComponentModule);
+
+			const Component = ComponentModule["${componentName}"] || ComponentModule.default;
 
             const App = () => {
                 return (
@@ -267,7 +370,8 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
                 );
             };
 
-            ReactDOM.render(React.createElement(App), document.getElementById('app'));
+            const root = ReactDOM.createRoot(document.getElementById('app'));
+            root.render(React.createElement(App));
         </script>
     </body>
     </html>`;
