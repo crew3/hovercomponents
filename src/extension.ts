@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import esbuild from 'esbuild';
 import path from 'path';
 import fs from 'fs';
+import casual from 'casual';
 import { polyfillNode } from "esbuild-plugin-polyfill-node";
 
 
@@ -137,28 +138,46 @@ function findNextDir(startPath: string) {
     return null; // .next directory not found
 }
 
+function generateFakeString(propName: string): any {
+    const lowerCasePropName = propName.toLowerCase();
+  
+    if (casual[lowerCasePropName]) {
+      return casual[lowerCasePropName];
+    }
+  
+    if (lowerCasePropName.includes("name")) {
+      return casual.full_name;
+    } else if (lowerCasePropName.includes("date")) {
+      return casual.date("YYYY-MM-DD");
+    } else {
+      return casual.words(3);
+    }
+}
+
 function generateMockProps(componentData: any): any {
     const dummyProps: { [key: string]: any } = {};
   
-    function generateDummyValue(tsType: any): any {
+    function generateDummyValue(propName: string, tsType: any): any {
       switch (tsType.name) {
         case 'string':
-          return 'dummy string';
+          return generateFakeString(propName);
         case 'number':
           return 123;
         case 'boolean':
           return true;
         case 'Array':
-          return tsType.elements ? [generateDummyValue(tsType.elements[0])] : [];
+          return tsType.elements ? [generateDummyValue(propName, tsType.elements[0])] : [];
         case 'signature':
           if (tsType.type === 'object') {
             const obj: { [key: string]: any } = {};
             tsType.signature.properties.forEach((prop: any) => {
-              obj[prop.key] = generateDummyValue(prop.value);
+              obj[prop.key] = generateDummyValue(propName, prop.value);
             });
             return obj;
           }
           return {};
+        case 'union':
+          return tsType.elements.map(e => e.value.replace(/['"]/g, ''));
         default:
           return null;
       }
@@ -169,7 +188,7 @@ function generateMockProps(componentData: any): any {
     if (hasProps) {
         Object.keys(componentData.props).forEach((propName) => {
         const propInfo = componentData.props[propName];
-        dummyProps[propName] = generateDummyValue(propInfo.tsType);
+        dummyProps[propName] = generateDummyValue(propName, propInfo.tsType);
         });
     }
   
