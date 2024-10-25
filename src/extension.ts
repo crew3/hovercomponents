@@ -394,12 +394,76 @@ function getWebviewContent(componentName: string, componentUri: vscode.Uri, styl
 			const Component = ComponentModule["${componentName}"] || ComponentModule.default;
 
             const App = () => {
+                const convertToDefaultProps = (props) => {
+                    const defaultProps = {};
+
+                    for (const key in props) {
+                        if (typeof props[key] === 'string') {
+                            defaultProps[key] = props[key];
+                        } else if (Array.isArray(props[key])) {
+                            defaultProps[key] = props[key][0];
+                        } else if (typeof props[key] === 'object' && props[key] !== null) {
+                            defaultProps[key] = convertToDefaultProps(props[key]);
+                        }
+                    }
+
+                    return defaultProps;
+                }
+
+                const [propsState, setPropsState] = React.useState(props);
+
+                const handleInputChange = (propName, value) => {
+                    setPropsState((prevProps) => ({ ...prevProps, [propName]: value }));
+                };
+
+                function FormField({ name, value, propValue, onChange }) {
+                    if (typeof propValue === 'string') {
+                        return (
+                            <div className="flex flex-col space-y-2">
+                                <label className="font-semibold">{name}</label>
+                                <input
+                                    type="text"
+                                    value={value}
+                                    onChange={(e) => onChange(name, e.target.value)}
+                                    className="p-2 border rounded border-gray-300"
+                                />
+                            </div>
+                        );
+                    } else if (Array.isArray(propValue)) {
+                        return (
+                            <div className="flex flex-col space-y-2">
+                                <label className="font-semibold">{name}</label>
+                                <select
+                                    value={value}
+                                    onChange={(e) => onChange(name, e.target.value)}
+                                    className="p-2 border rounded border-gray-300"
+                                >
+                                    {propValue.map((option) => (
+                                        <option key={option} value={option}>
+                                            {option}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        );
+                    }
+                    return null;
+                }
+
                 return (
                     <div className="h-screen flex flex-col">
                         <div className="font-bold text-lg py-2 px-4">XYZly</div>
-                        <div className="rounded-t-2xl border border-black border-opacity-10 bg-white flex-grow px-4 py-4 text-black">
-						    <Component {...props} />
-                            <div>
+                        <div className="rounded-t-2xl border border-black border-opacity-10 bg-white flex-grow p-4 text-black">
+						    <Component {...propsState} />
+                            <div className="p-4 bg-gray-50 mt-8 rounded space-y-4">
+                                {Object.keys(props).map((propName) => (
+                                    <FormField
+                                        key={propName}
+                                        name={propName}
+                                        value={propsState[propName]}
+                                        propValue={props[propName]}
+                                    />
+                                ))}
                                 <pre>
                                     {JSON.stringify(props, null, 2)}
                                 </pre>
